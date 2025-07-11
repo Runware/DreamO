@@ -18,9 +18,13 @@ import re
 import cv2
 import numpy as np
 import torch
+from PIL import Image
+from torchvision.transforms.functional import normalize
 from torchvision.utils import make_grid
 
 
+def convert_from_image_to_cv2(img: Image.Image) -> np.ndarray:
+    return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 # from basicsr
 def img2tensor(imgs, bgr2rgb=True, float32=True):
     """Numpy array to tensor.
@@ -110,6 +114,8 @@ def tensor2img(tensor, rgb2bgr=True, out_type=np.uint8, min_max=(0, 1)):
 
 
 def resize_numpy_image_area(image, area=512 * 512):
+    if isinstance(image, Image.Image):
+        image = convert_from_image_to_cv2(image)
     h, w = image.shape[:2]
     k = math.sqrt(area / (h * w))
     h = int(h * k) - (int(h * k) % 16)
@@ -118,6 +124,8 @@ def resize_numpy_image_area(image, area=512 * 512):
     return image
 
 def resize_numpy_image_long(image, long_edge=768):
+    if isinstance(image, Image.Image):
+        image = convert_from_image_to_cv2(image)
     h, w = image.shape[:2]
     if max(h, w) <= long_edge:
         return image
@@ -231,15 +239,60 @@ def convert_flux_lora_to_diffusers(old_state_dict):
 
     return new_state_dict
 
+@torch.no_grad()
+def get_align_face(img,face_helper):
+    # the face preprocessing code is same as PuLID
+    face_helper.clean_all()
+    image_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    face_helper.read_image(image_bgr)
+    face_helper.get_face_landmarks_5(only_center_face=True)
+    face_helper.align_warp_face()
+    if len(face_helper.cropped_faces) == 0:
+        return None
+    align_face = face_helper.cropped_faces[0]
 
-def get_device(device='auto'):
-    """Automatically detect the best available device"""
-    if device != 'auto':
-        return torch.device(device)
-    
-    if torch.cuda.is_available():
-        return torch.device('cuda')
-    elif torch.backends.mps.is_available():
-        return torch.device('mps')
-    else:
-        return torch.device('cpu')
+    input = img2tensor(align_face, bgr2rgb=True).unsqueeze(0) / 255.0
+    input = input.to(torch.device("cuda"))
+    parsing_out = face_helper.face_parse(normalize(input, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]))[0]
+    parsing_out = parsing_out.argmax(dim=1, keepdim=True)
+    bg_label = [0, 16, 18, 7, 8, 9, 14, 15]
+    bg = sum(parsing_out == i for i in bg_label).bool()
+    white_image = torch.ones_like(input)
+    # only keep the face features
+    face_features_image = torch.where(bg, white_image, input)
+    face_features_image = tensor2img(face_features_image, rgb2bgr=False)
+
+    return face_features_image
+
+def process_dreamo(task, bg_model, face_helper):
+
+    ref_res = task.dreamo_subtask.ref_res
+    ref_conds = []
+
+    ref_images_with_tasks = task.dreamo_subtask.reference_images
+    for idx, ref in enumerate(ref_images_with_tasks):
+        ref_image = ref.image
+        ref_task = ref.task
+        if ref_image is not None:
+            if ref_task == "id":
+                ref_image = resize_numpy_image_long(ref_image, 1024)
+                ref_image = get_align_face(ref_image, face_helper)
+            elif ref_task != "style":
+                    ref_image = bg_model.inference(ref_image)
+                    white_background = Image.new('RGB', ref_image.size, (255, 255, 255))  # Set the background to white. (Fork From dreamo ben code)
+                    white_background.paste(ref_image, mask=ref_image.split()[3])
+                    ref_image = white_background
+            if ref_task != "id":
+                ref_image = resize_numpy_image_area(np.array(ref_image), ref_res * ref_res)
+
+            ref_image = img2tensor(ref_image, bgr2rgb=False).unsqueeze(0) / 255.0
+            ref_image = 2 * ref_image - 1.0
+            ref_conds.append(
+                {
+                    'img': ref_image,
+                    'task': ref_task,
+                    'idx': idx + 1,
+                }
+            )
+    return ref_conds
+

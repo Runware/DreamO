@@ -26,8 +26,8 @@ from einops import repeat
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
-from dreamo.transformer import flux_transformer_forward
-from dreamo.utils import convert_flux_lora_to_diffusers
+from .transformer import flux_transformer_forward
+from .utils import convert_flux_lora_to_diffusers
 
 diffusers.models.transformers.transformer_flux.FluxTransformer2DModel.forward = flux_transformer_forward
 
@@ -122,7 +122,7 @@ class DreamOPipeline(FluxPipeline):
 
     # Using nunchaku
     def load_dreamo_model_nunchaku(self, device, use_turbo=True, version='v1.1'):
-        
+
         try:
             # The current version has been tested: nunchaku v0.3.x
             from nunchaku import NunchakuFluxTransformer2dModel
@@ -130,7 +130,7 @@ class DreamOPipeline(FluxPipeline):
             NunchakuFluxTransformer2dModel.forward = flux_transformer_forward
         except Exception as e:
             raise ValueError("👉️ To use this you need to install nunchaku")
-        
+
         # download models and load file
         if version == 'v1':#Add commentMore actions
             hf_hub_download(repo_id='ByteDance/DreamO', filename='dreamo_quality_lora_pos.safetensors', local_dir='models')
@@ -144,8 +144,8 @@ class DreamOPipeline(FluxPipeline):
             dpo_lora = load_file('models/v1.1/dreamo_dpo_lora.safetensors')
         else:
             raise ValueError(f'there is no {version}')
-        
-        
+
+
         # download models and load file
         print(f'load main lora ...')
         hf_hub_download(repo_id='ByteDance/DreamO', filename='dreamo.safetensors', local_dir='models')
@@ -162,10 +162,10 @@ class DreamOPipeline(FluxPipeline):
         # main lora
         dreamo_lora = convert_flux_lora_to_diffusers(dreamo_lora)
         cfg_distill_lora = convert_flux_lora_to_diffusers(cfg_distill_lora)
-        
+
         # others lora
         others = []
-        
+
         if use_turbo:
             print(f'load turbo lora ...')
             hf_hub_download("alimama-creative/FLUX.1-Turbo-Alpha", "diffusion_pytorch_model.safetensors", local_dir='models')
@@ -186,7 +186,7 @@ class DreamOPipeline(FluxPipeline):
         # compose lora
         composed_lora = compose_lora(
             [
-                (dreamo_lora, 1), 
+                (dreamo_lora, 1),
                 (cfg_distill_lora, 1),
             ] + others
         )
