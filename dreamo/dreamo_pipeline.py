@@ -29,7 +29,7 @@ from safetensors.torch import load_file
 from dreamo.transformer import flux_transformer_forward
 from dreamo.utils import convert_flux_lora_to_diffusers
 
-diffusers.models.transformers.transformer_flux.FluxTransformer2DModel.forward = flux_transformer_forward
+# diffusers.models.transformers.transformer_flux.FluxTransformer2DModel.forward = flux_transformer_forward
 
 
 def get_task_embedding_idx(task):
